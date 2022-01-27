@@ -1,28 +1,32 @@
 use {
-    clap::{crate_description, crate_name, crate_version, App, AppSettings, Arg, SubCommand},
+    clap::{
+        crate_description, crate_name, crate_version, value_t_or_exit, App, AppSettings, Arg,
+        SubCommand,
+    },
     futures_util::StreamExt,
     solana_clap_utils::{
         input_parsers::pubkey_of,
         input_validators::{
-            is_url_or_moniker, is_valid_pubkey, is_valid_signer, normalize_to_url_if_moniker,
+            is_parsable, is_url_or_moniker, is_valid_pubkey, is_valid_signer,
+            normalize_to_url_if_moniker,
         },
         keypair::DefaultSigner,
     },
-    solana_client::{
-        nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
-        rpc_config::{RpcTransactionLogsConfig, RpcTransactionLogsFilter},
-    },
+    solana_client::nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_sdk::{
-        commitment_config::CommitmentConfig,
-        message::Message,
-        native_token::Sol,
-        signature::{Signature, Signer},
-        system_instruction,
-        transaction::Transaction,
+        clock::Slot, commitment_config::CommitmentConfig, hash::Hash, pubkey::Pubkey,
+        signature::Signer,
     },
-    std::{process::exit, sync::Arc},
+    solana_vote_program::vote_state::{Vote, VoteState},
+    std::{
+        collections::{HashMap, HashSet},
+        process::exit,
+        sync::Arc,
+    },
 };
+
+mod vv;
 
 struct Config {
     commitment_config: CommitmentConfig,
@@ -32,64 +36,156 @@ struct Config {
     websocket_url: String,
 }
 
-async fn process_ping(
-    rpc_client: &RpcClient,
-    signer: &dyn Signer,
-) -> Result<Signature, Box<dyn std::error::Error>> {
-    let from = signer.pubkey();
-    let to = signer.pubkey();
-    let amount = 0;
-
-    let mut transaction = Transaction::new_unsigned(Message::new(
-        &[system_instruction::transfer(&from, &to, amount)],
-        Some(&signer.pubkey()),
-    ));
-
-    let blockhash = rpc_client
-        .get_latest_blockhash()
-        .await
-        .map_err(|err| format!("error: unable to get latest blockhash: {}", err))?;
-
-    transaction
-        .try_sign(&vec![signer], blockhash)
-        .map_err(|err| format!("error: failed to sign transaction: {}", err))?;
-
-    let signature = rpc_client
-        .send_and_confirm_transaction_with_spinner(&transaction)
-        .await
-        .map_err(|err| format!("error: send transaction: {}", err))?;
-
-    Ok(signature)
-}
-
-async fn process_logs(websocket_url: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let pubsub_client = PubsubClient::new(websocket_url).await?;
-
-    let (mut logs, logs_unsubscribe) = pubsub_client
-        .logs_subscribe(
-            RpcTransactionLogsFilter::All,
-            RpcTransactionLogsConfig {
-                commitment: Some(CommitmentConfig::confirmed()),
-            },
-        )
-        .await?;
-
-    while let Some(log) = logs.next().await {
-        println!("Transaction executed in slot {}:", log.context.slot);
-        println!("  Signature: {}:", log.value.signature);
-        println!(
-            "  Status: {}",
-            log.value
-                .err
-                .map(|err| err.to_string())
-                .unwrap_or_else(|| "Success".into())
-        );
-        println!("  Log Messages:");
-        for msg in log.value.logs {
-            println!("    {}", msg);
+// a slot is recent if it's newer than the last vote we have
+pub fn is_recent(vote_state: &VoteState, slot: Slot) -> bool {
+    if let Some(last_voted_slot) = vote_state.last_voted_slot() {
+        if slot <= last_voted_slot {
+            return false;
         }
     }
-    logs_unsubscribe().await;
+    true
+}
+
+pub fn is_locked_out(vote_state: &VoteState, slot: Slot, ancestors: &HashSet<Slot>) -> bool {
+    // Check if a slot is locked out by simulating adding a vote for that
+    // slot to the current lockouts to pop any expired votes. If any of the
+    // remaining voted slots are on a different fork from the checked slot,
+    // it's still locked out.
+    let mut vote_state = vote_state.clone();
+    vote_state.process_slot_vote_unchecked(slot);
+    for vote in &vote_state.votes {
+        if slot != vote.slot && !ancestors.contains(&vote.slot) {
+            println!("vote.slot {} is not an ancestor of {}", vote.slot, slot);
+            return true;
+        }
+    }
+    false
+}
+
+async fn process_votes(websocket_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    let pubsub_client = PubsubClient::new(websocket_url).await?;
+
+    let (mut rpc_votes, votes_unsubscribe) = pubsub_client.vote_subscribe().await?;
+    let (mut slots, slot_unsubscribe) = pubsub_client.slot_subscribe().await?;
+
+    let mut votes_by_slot = HashMap::<Slot, Vec<(Pubkey, Vote)>>::default();
+    let mut slot_parents = HashMap::</*child=*/ Slot, /*parent=*/ Slot>::default();
+    let mut vote_states = HashMap::<Pubkey, VoteState>::default();
+    loop {
+        tokio::select! {
+            Some(rpc_vote) = rpc_votes.next() => {
+                println!("Vote: {:?}", rpc_vote);
+
+                if !rpc_vote.slots.is_empty() {
+                    let vote_pubkey = rpc_vote.vote_pubkey.parse::<Pubkey>().unwrap();
+
+                    let vote = Vote {
+                        slots: rpc_vote.slots.clone(),
+                        hash: rpc_vote.hash.parse::<Hash>().unwrap(),
+                        timestamp: rpc_vote.timestamp,
+                    };
+                    votes_by_slot.entry(*vote.slots.last().unwrap()).or_default().push((vote_pubkey,vote));
+                }
+            }
+
+            Some(slot_info) = slots.next() => {
+                println!("{:?}", slot_info);
+                slot_parents.insert(slot_info.slot, slot_info.parent);
+            }
+            else => break,
+        }
+
+        if slot_parents.is_empty() {
+            continue;
+        }
+
+        let lowest_slot = loop {
+            let lowest_slot = *slot_parents.keys().min().unwrap();
+            if slot_parents.len() < 1_000 {
+                break lowest_slot;
+            }
+            slot_parents.remove(&lowest_slot);
+        };
+        votes_by_slot.retain(|slot, _| *slot >= lowest_slot);
+
+        let highest_slot = *slot_parents.keys().max().unwrap();
+
+        let mut slots = votes_by_slot
+            .keys()
+            .filter(|slot| **slot <= highest_slot)
+            .cloned()
+            .collect::<Vec<_>>();
+        slots.sort_unstable();
+
+        if !slots.is_empty() {
+            println!("Vote slots to process: {:?}", slots);
+        }
+
+        for slot in slots {
+            let votes = votes_by_slot.remove(&slot).unwrap();
+
+            fn build_ancestors(
+                mut slot: Slot,
+                slot_parents: &HashMap</*child=*/ Slot, /*parent=*/ Slot>,
+            ) -> HashSet<Slot> {
+                let mut ancestors = HashSet::default();
+                while let Some(parent) = slot_parents.get(&slot) {
+                    ancestors.insert(*parent);
+                    slot = *parent;
+                }
+                ancestors
+            }
+
+            println!("   slot {}:", slot);
+            for (vote_pubkey, vote) in votes {
+                println!("  Processing {} vote: {:?}", vote_pubkey, vote);
+
+                let vote_state = vote_states.entry(vote_pubkey).or_default();
+
+                if let Some(lowest_vote_state_slot) = vote_state.votes.iter().map(|l| l.slot).min()
+                {
+                    if !slot_parents.contains_key(&lowest_vote_state_slot) {
+                        println!(
+                            "  WARN: Unable to process due to lowest vote_state slot = {}",
+                            lowest_vote_state_slot
+                        );
+                        continue;
+                    }
+                }
+
+                if let Some(lowest_vote_slot) = vote.slots.first() {
+                    if !slot_parents.contains_key(lowest_vote_slot) {
+                        println!(
+                            "  WARN: Unable to process due to lowest vote slot = {}",
+                            lowest_vote_slot
+                        );
+                        continue;
+                    }
+                }
+
+                let highest_vote_slot = *vote.slots.last().unwrap();
+                if is_recent(vote_state, highest_vote_slot) {
+                    let ancestors = build_ancestors(highest_vote_slot, &slot_parents);
+                    if is_locked_out(vote_state, highest_vote_slot, &ancestors) {
+                        panic!(
+                            "locked out at {} with state {:?}. ancestors {:?}",
+                            highest_vote_slot, vote_state, ancestors
+                        );
+                    }
+
+                    vote_state.process_vote_unchecked(vote);
+                    println!(
+                        "    tower depth: {}, credits: {}",
+                        vote_state.votes.len(),
+                        vote_state.credits()
+                    );
+                }
+            }
+        }
+    }
+
+    slot_unsubscribe().await;
+    votes_unsubscribe().await;
     Ok(())
 }
 
@@ -140,18 +236,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .validator(is_url_or_moniker)
                 .help("JSON RPC URL for the cluster [default: value from configuration file]"),
         )
+        .subcommand(SubCommand::with_name("votes").about("Stream votes"))
         .subcommand(
-            SubCommand::with_name("balance").about("Get balance").arg(
-                Arg::with_name("address")
-                    .validator(is_valid_pubkey)
-                    .value_name("ADDRESS")
-                    .takes_value(true)
-                    .index(1)
-                    .help("Address to get the balance of"),
-            ),
+            SubCommand::with_name("vv")
+                .about("Vote Viewer")
+                .arg(
+                    Arg::with_name("vote_account_address")
+                        .validator(is_valid_pubkey)
+                        .value_name("ADDRESS")
+                        .takes_value(true)
+                        .index(1)
+                        .help("Vote account address"),
+                )
+                .arg(
+                    Arg::with_name("limit")
+                        .long("limit")
+                        .short("l")
+                        .validator(is_parsable::<usize>)
+                        .takes_value(true)
+                        .value_name("LIMIT")
+                        .default_value("10")
+                        .help("Number of transactions to process"),
+                ),
         )
-        .subcommand(SubCommand::with_name("ping").about("Send a ping transaction"))
-        .subcommand(SubCommand::with_name("logs").about("Stream transaction logs"))
         .get_matches();
 
     let (sub_command, sub_matches) = app_matches.subcommand();
@@ -204,47 +311,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         RpcClient::new_with_commitment(config.json_rpc_url.clone(), config.commitment_config);
 
     match (sub_command, sub_matches) {
-        ("balance", Some(arg_matches)) => {
-            let address =
-                pubkey_of(arg_matches, "address").unwrap_or_else(|| config.default_signer.pubkey());
-            println!(
-                "{} has a balance of {}",
-                address,
-                Sol(rpc_client.get_balance(&address).await?)
-            );
-        }
-        ("logs", Some(_arg_matches)) => {
-            process_logs(&config.websocket_url)
+        ("vv", Some(arg_matches)) => {
+            let vote_account_address = pubkey_of(arg_matches, "vote_account_address")
+                .unwrap_or_else(|| config.default_signer.pubkey());
+            let limit = value_t_or_exit!(arg_matches, "limit", usize);
+            vv::process_view_votes(&rpc_client, &vote_account_address, limit)
                 .await
                 .unwrap_or_else(|err| {
                     eprintln!("error: {}", err);
                     exit(1);
                 });
         }
-        ("ping", Some(_arg_matches)) => {
-            let signature = process_ping(&rpc_client, config.default_signer.as_ref())
+        ("votes", Some(_arg_matches)) => {
+            process_votes(&config.websocket_url)
                 .await
                 .unwrap_or_else(|err| {
-                    eprintln!("error: send transaction: {}", err);
+                    eprintln!("error: {}", err);
                     exit(1);
                 });
-            println!("Signature: {}", signature);
         }
         _ => unreachable!(),
     };
 
     Ok(())
-}
-
-#[cfg(test)]
-mod test {
-    use {super::*, solana_validator::test_validator::*};
-
-    #[tokio::test]
-    async fn test_ping() {
-        let (test_validator, payer) = TestValidatorGenesis::default().start_async().await;
-        let rpc_client = test_validator.get_async_rpc_client();
-
-        assert!(matches!(process_ping(&rpc_client, &payer).await, Ok(_)));
-    }
 }
