@@ -10,17 +10,38 @@ publish = false
 clap = "2.33.3"
 criterion-stats = "0.3.0"
 futures-util = "0.3.19"
-solana-clap-utils = "=1.9.1"
-solana-cli-config = "=1.9.1"
-solana-client = "=1.9.1"
-solana-logger = "=1.9.1"
-solana-remote-wallet = "=1.9.1"
-solana-sdk = "=1.9.1"
-solana-transaction-status = "=1.9.1"
-solana-vote-program = "=1.9.1"
+solana-clap-utils = "=1.10.0"
+solana-cli-config = "=1.10.0"
+solana-client = "=1.10.0"
+solana-logger = "=1.10.0"
+solana-remote-wallet = "=1.10.0"
+solana-sdk = "=1.10.0"
+solana-transaction-status = "=1.10.0"
+solana-vote-program = "=1.10.0"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
-solana-validator = "=1.9.1"
+solana-validator = "=1.10.0"
 
 [workspace]
+[patch.crates-io]
+solana-account-decoder = {path = "./solana-v1.10/account-decoder" }
+solana-banks-client = { path = "./solana-v1.10/banks-client"}
+solana-banks-server = { path = "./solana-v1.10/banks-server"}
+solana-bpf-loader-program = { path = "./solana-v1.10/programs/bpf_loader" }
+solana-clap-utils = {path = "./solana-v1.10/clap-utils" }
+solana-cli-config = {path = "./solana-v1.10/cli-config" }
+solana-cli-output = {path = "./solana-v1.10/cli-output" }
+solana-client = { path = "./solana-v1.10/client"}
+solana-core = { path = "./solana-v1.10/core"}
+solana-logger = {path = "./solana-v1.10/logger" }
+solana-notifier = { path = "./solana-v1.10/notifier" }
+solana-remote-wallet = {path = "./solana-v1.10/remote-wallet" }
+solana-program = { path = "./solana-v1.10/sdk/program" }
+solana-program-test = { path = "./solana-v1.10/program-test" }
+solana-runtime = { path = "./solana-v1.10/runtime" }
+solana-sdk = { path = "./solana-v1.10/sdk" }
+solana-stake-program = { path = "./solana-v1.10/programs/stake" }
+solana-transaction-status = { path = "./solana-v1.10/transaction-status" }
+solana-validator = { path = "./solana-v1.10/validator" }
+solana-vote-program = { path = "./solana-v1.10/programs/vote" }
