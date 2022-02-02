@@ -74,15 +74,6 @@ struct TableEntry {
     vote_meta: VoteMeta,
 }
 
-impl TableEntry {
-    fn populated(&self) -> bool {
-        match self.kind {
-            TableEntryKind::Space | TableEntryKind::VoteGap | TableEntryKind::Waiting => false,
-            TableEntryKind::Vote | TableEntryKind::Landed => true,
-        }
-    }
-}
-
 impl fmt::Display for TableEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let signature = self.vote_meta.signature.to_string();
@@ -206,6 +197,7 @@ pub async fn process_view_votes(
     let slot_vote_max_depth = slot_vote_count.values().max().unwrap();
 
     let mut table = BTreeMap::<Slot, Vec<Option<TableEntry>>>::default();
+    let mut failed_vote_count = 0;
 
     vote_metas.sort_by(|a, b| b.landed_slot.cmp(&a.landed_slot));
     let mut max_last_vote_slot = 0;
@@ -213,6 +205,9 @@ pub async fn process_view_votes(
         let first_vote_slot = vote_meta.vote_slots[0];
         let last_vote_slot = *vote_meta.vote_slots.last().unwrap();
         max_last_vote_slot = last_vote_slot.max(max_last_vote_slot);
+        if !vote_meta.success {
+            failed_vote_count += 1;
+        }
 
         let mut depth = 0;
         loop {
@@ -261,9 +256,13 @@ pub async fn process_view_votes(
 
     let start_slot = *table.keys().next().unwrap();
     let end_slot = *table.keys().last().unwrap();
+    for slot in start_slot..end_slot {
+        table.entry(slot).or_default();
+    }
     let confirmed_slots = rpc_client.get_blocks(start_slot, Some(end_slot)).await?;
 
     let mut miss_count = 0;
+
     println!();
     for (slot, row_entries) in table {
         let confirmed = confirmed_slots.contains(&slot);
@@ -271,7 +270,7 @@ pub async fn process_view_votes(
             && !row_entries.iter().any(|entry| {
                 entry
                     .as_ref()
-                    .map(|entry| entry.populated() && entry.vote_meta.success)
+                    .map(|entry| entry.kind == TableEntryKind::Vote && entry.vote_meta.success)
                     .unwrap_or(false)
             });
         if confirmed && miss {
@@ -306,5 +305,9 @@ pub async fn process_view_votes(
     if miss_count > 0 {
         println!("Missed slots: {}", miss_count);
     }
+    if failed_vote_count > 0 {
+        println!("Failed vote transactions: {}", failed_vote_count);
+    }
+
     Ok(())
 }
