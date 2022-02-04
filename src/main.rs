@@ -1,7 +1,7 @@
 use {
     clap::{
-        crate_description, crate_name, crate_version, value_t_or_exit, App, AppSettings, Arg,
-        SubCommand,
+        crate_description, crate_name, crate_version, value_t, value_t_or_exit, App, AppSettings,
+        Arg, SubCommand,
     },
     futures_util::StreamExt,
     solana_clap_utils::{
@@ -15,8 +15,11 @@ use {
     solana_client::nonblocking::{pubsub_client::PubsubClient, rpc_client::RpcClient},
     solana_remote_wallet::remote_wallet::RemoteWalletManager,
     solana_sdk::{
-        clock::Slot, commitment_config::CommitmentConfig, hash::Hash, pubkey::Pubkey,
-        signature::Signer,
+        clock::Slot,
+        commitment_config::CommitmentConfig,
+        hash::Hash,
+        pubkey::Pubkey,
+        signature::{Signature, Signer},
     },
     solana_vote_program::vote_state::{Vote, VoteState},
     std::{
@@ -257,6 +260,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .value_name("LIMIT")
                         .default_value("10")
                         .help("Number of transactions to process"),
+                )
+                .arg(
+                    Arg::with_name("before")
+                        .long("before")
+                        .short("b")
+                        .validator(is_parsable::<Signature>)
+                        .takes_value(true)
+                        .value_name("TRANSACTION_SIGNATURE")
+                        .help("Start with the first vote older than this transaction signature"),
                 ),
         )
         .get_matches();
@@ -315,7 +327,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let vote_account_address = pubkey_of(arg_matches, "vote_account_address")
                 .unwrap_or_else(|| config.default_signer.pubkey());
             let limit = value_t_or_exit!(arg_matches, "limit", usize);
-            vv::process_view_votes(&rpc_client, &vote_account_address, limit)
+            let before = value_t!(arg_matches, "before", Signature).ok();
+            vv::process_view_votes(&rpc_client, &vote_account_address, limit, before)
                 .await
                 .unwrap_or_else(|err| {
                     eprintln!("error: {}", err);

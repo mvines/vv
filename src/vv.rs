@@ -126,12 +126,14 @@ pub async fn process_view_votes(
     rpc_client: &RpcClient,
     vote_account_address: &Pubkey,
     limit: usize,
+    before: Option<Signature>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let signatures_for_address = rpc_client
         .get_signatures_for_address_with_config(
             vote_account_address,
             GetConfirmedSignaturesForAddress2Config {
                 limit: Some(limit),
+                before,
                 ..GetConfirmedSignaturesForAddress2Config::default()
             },
         )
