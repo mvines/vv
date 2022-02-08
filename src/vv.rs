@@ -147,6 +147,9 @@ pub async fn process_view_votes(
     let mut vote_metas = vec![];
     let mut slot_vote_count = HashMap::<Slot, usize>::default();
 
+    let mut slots_per_vote = vec![];
+    let mut vote_landing_distance = vec![];
+
     for RpcConfirmedTransactionStatusWithSignature {
         signature,
         slot: landed_slot,
@@ -178,6 +181,9 @@ pub async fn process_view_votes(
             if !vote.slots.is_empty() {
                 let mut vote_slots = vote.slots.clone();
                 vote_slots.sort_unstable();
+
+                slots_per_vote.push(vote.slots.len() as f64);
+                vote_landing_distance.push((landed_slot - vote_slots.last().unwrap()) as f64);
 
                 for slot in *vote_slots.first().unwrap()..=landed_slot + 1 {
                     slot_vote_count
@@ -298,9 +304,10 @@ pub async fn process_view_votes(
     }
 
     println!(
-        "\nSlot Range: {}..{}\n{} of {} confirmed",
+        "\nSlot Range: {}..{} ({})\n{} of {} confirmed",
         start_slot,
         end_slot,
+        end_slot - start_slot + 1,
         confirmed_slots.len(),
         end_slot - start_slot + 1
     );
@@ -310,6 +317,25 @@ pub async fn process_view_votes(
     if failed_vote_count > 0 {
         println!("Failed vote transactions: {}", failed_vote_count);
     }
+
+    let slots_per_vote = criterion_stats::Distribution::from(slots_per_vote.into_boxed_slice());
+    println!(
+        "Slots per vote: min/avg/max/stddev = {}/{}/{}/{:.3}",
+        slots_per_vote.min(),
+        slots_per_vote.mean(),
+        slots_per_vote.max(),
+        slots_per_vote.std_dev(Some(slots_per_vote.mean()))
+    );
+
+    let vote_landing_distance =
+        criterion_stats::Distribution::from(vote_landing_distance.into_boxed_slice());
+    println!(
+        "Vote landing distance: min/avg/max/stddev = {}/{}/{}/{:.3}",
+        vote_landing_distance.min(),
+        vote_landing_distance.mean(),
+        vote_landing_distance.max(),
+        vote_landing_distance.std_dev(Some(vote_landing_distance.mean()))
+    );
 
     Ok(())
 }
