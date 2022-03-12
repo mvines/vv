@@ -1,6 +1,7 @@
 ## Vote viewer
 
-Visualize the voting behaviour of a Solana validator
+Visualize the voting behaviour of a Solana validator.
+It's strongly recommmended to run `vv` against a private Solana RPC endpoint, most public RPC endpoint rate limits will be too strict.
 
 ```
 $ vv --help
