@@ -1,9 +1,37 @@
-Vote viewer
+## Vote viewer
+
+Visualize the voting behaviour of a Solana validator
 
 ```
-cargo run -- 9QU2QSxhb24FUX3Tu2FpczXjpK3VYrvRudywSZaM29mF
-    Finished dev [unoptimized + debuginfo] target(s) in 0.13s
-     Running `target/debug/vv 9QU2QSxhb24FUX3Tu2FpczXjpK3VYrvRudywSZaM29mF`
+$ vv --help
+vv 0.1.0
+Vote Viewer
+
+USAGE:
+    vv [FLAGS] [OPTIONS] [ADDRESS]
+
+FLAGS:
+    -h, --help       Prints help information
+    -V, --version    Prints version information
+    -v, --verbose    Show additional information
+
+OPTIONS:
+    -b, --before <TRANSACTION_SIGNATURE>    Start with the first vote older than this transaction signature
+    -C, --config <PATH>                     Configuration file to use [default:
+                                            /Users/mvines/.config/solana/cli/config.yml]
+    -u, --url <URL>                         JSON RPC URL for the cluster [default: value from configuration file]
+        --keypair <KEYPAIR>                 Filepath or URL to a keypair [default: client keypair]
+    -l, --limit <LIMIT>                     Number of transactions to process [default: 10]
+
+ARGS:
+    <ADDRESS>    Vote account address
+
+```
+
+
+### Sample output
+```
+$ vv 9QU2QSxhb24FUX3Tu2FpczXjpK3VYrvRudywSZaM29mF
 10 transaction to processs:
 3S1YoGHKGsrYmCduXfHjVe6q5jctim1DQHMcs1qyqX2TAmU84hULjq6WgiC79BDUoDMg5XaKrAXB5V4NyvwXvfGf
 eqcnyDDd5ySXpqoHRG6LKBaPkj833Td4YTWTro6mAnaVyUFLPcfvNQ2cvzoJZBxwiqq4Y1tRLS3CCtxWwaoSYB3
