@@ -118,8 +118,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let json_rpc_url = normalize_to_url_if_moniker(
             matches
                 .value_of("json_rpc_url")
-                .unwrap_or(&cli_config.json_rpc_url)
-                .to_string(),
+                .unwrap_or(&cli_config.json_rpc_url),
         );
 
         let websocket_url = solana_cli_config::Config::compute_websocket_url(&json_rpc_url);

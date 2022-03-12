@@ -22,26 +22,3 @@ tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
 solana-validator = "=1.10.0"
-
-[workspace]
-[patch.crates-io]
-solana-account-decoder = {path = "./solana-v1.10/account-decoder" }
-solana-banks-client = { path = "./solana-v1.10/banks-client"}
-solana-banks-server = { path = "./solana-v1.10/banks-server"}
-solana-bpf-loader-program = { path = "./solana-v1.10/programs/bpf_loader" }
-solana-clap-utils = {path = "./solana-v1.10/clap-utils" }
-solana-cli-config = {path = "./solana-v1.10/cli-config" }
-solana-cli-output = {path = "./solana-v1.10/cli-output" }
-solana-client = { path = "./solana-v1.10/client"}
-solana-core = { path = "./solana-v1.10/core"}
-solana-logger = {path = "./solana-v1.10/logger" }
-solana-notifier = { path = "./solana-v1.10/notifier" }
-solana-remote-wallet = {path = "./solana-v1.10/remote-wallet" }
-solana-program = { path = "./solana-v1.10/sdk/program" }
-solana-program-test = { path = "./solana-v1.10/program-test" }
-solana-runtime = { path = "./solana-v1.10/runtime" }
-solana-sdk = { path = "./solana-v1.10/sdk" }
-solana-stake-program = { path = "./solana-v1.10/programs/stake" }
-solana-transaction-status = { path = "./solana-v1.10/transaction-status" }
-solana-validator = { path = "./solana-v1.10/validator" }
-solana-vote-program = { path = "./solana-v1.10/programs/vote" }
