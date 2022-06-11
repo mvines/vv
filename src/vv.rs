@@ -31,6 +31,10 @@ fn is_simple_vote_transaction(transaction: &SanitizedTransaction) -> Option<Vote
                     VoteInstruction::Vote(vote) | VoteInstruction::VoteSwitch(vote, _) => {
                         return Some(vote)
                     }
+                    VoteInstruction::UpdateVoteState(vote_state_update)
+                    | VoteInstruction::UpdateVoteStateSwitch(vote_state_update, _) => {
+                        panic!("TODO: Add support for UpdateVoteState and UpdateVoteStateSwitch instructions: {:?}", vote_state_update);
+                    }
                     _ => {}
                 }
             }
@@ -172,9 +176,8 @@ pub async fn process_view_votes(
         if let Some(vote) = is_simple_vote_transaction(&transaction) {
             /*
             println!(
-                "VOTE! {} slot {}: {:?}",
+                "VOTE! {}: {:?}",
                 if err.is_none() { " OK " } else { "FAIL" },
-                slot,
                 vote
             );
             */
@@ -200,6 +203,11 @@ pub async fn process_view_votes(
                 });
             }
         }
+    }
+
+    if slot_vote_count.is_empty() {
+        println!("No simple vote transactions found");
+        return Ok(());
     }
 
     let slot_vote_max_depth = slot_vote_count.values().max().unwrap();
